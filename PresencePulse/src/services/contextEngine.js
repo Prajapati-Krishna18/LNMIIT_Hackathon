@@ -181,3 +181,73 @@ export function setDriftThreshold(mode) {
 export function getDriftThreshold() {
   return driftThreshold;
 }
+
+let lastProcessedTimestamp = 0;
+
+export function analyzeUsageEvents(events) {
+  if (!events || !Array.isArray(events) || events.length === 0) return [];
+
+  const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+  const activeAppSessions = {};
+  const newSessions = [];
+
+  for (const event of sortedEvents) {
+    const { packageName, timestamp, eventType } = event;
+
+    if (eventType === 'FOREGROUND') {
+      activeAppSessions[packageName] = timestamp;
+    } else if (eventType === 'BACKGROUND') {
+      const startTime = activeAppSessions[packageName];
+      if (startTime && timestamp > startTime) {
+        if (timestamp > lastProcessedTimestamp) {
+          const durationSeconds = (timestamp - startTime) / 1000;
+
+          const sessionRecord = {
+            packageName,
+            startTime,
+            endTime: timestamp,
+            duration: durationSeconds
+          };
+          newSessions.push(sessionRecord);
+
+          processRealSession(sessionRecord);
+        }
+        delete activeAppSessions[packageName];
+      }
+    }
+  }
+
+  if (sortedEvents.length > 0) {
+    const maxTime = Math.max(...sortedEvents.map(e => e.timestamp));
+    if (maxTime > lastProcessedTimestamp) {
+      lastProcessedTimestamp = maxTime;
+    }
+  }
+
+  return newSessions;
+}
+
+function processRealSession(session) {
+  const durationSeconds = session.duration;
+  const type = durationSeconds < MICRO_CHECK_THRESHOLD_SECONDS ? 'micro-check' : 'session';
+
+  const record = {
+    startTime: session.startTime,
+    endTime: session.endTime,
+    durationSeconds,
+    type,
+    packageName: session.packageName
+  };
+
+  sessionHistory.push(record);
+  console.log(`${logPrefix} Real session parsed: ${session.packageName} (${durationSeconds.toFixed(2)}s) - ${type}`);
+
+  if (type === 'micro-check') {
+    microCheckCount += 1;
+    console.log(`${logPrefix} Real Micro-check detected. Count: ${microCheckCount}`);
+    trackBurst(session.endTime);
+  } else {
+    updateDriftSeverity();
+  }
+}
+

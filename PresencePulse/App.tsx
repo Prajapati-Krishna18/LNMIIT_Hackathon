@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Button,
   SafeAreaView,
   StatusBar,
   StyleSheet,
@@ -7,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { 
+import {
   getBurstCount,
   getDriftSeverity,
   getDriftThreshold,
@@ -17,7 +18,13 @@ import {
   setDriftThreshold,
   startSession,
   endSession,
+  analyzeUsageEvents,
 } from './src/services/contextEngine';
+import {
+  checkUsageAccessPermission,
+  getRecentUsageEvents,
+  openUsageAccessSettings,
+} from './src/services/usageTrackingService';
 
 function App() {
   return (
@@ -46,10 +53,10 @@ const SENSITIVITY_OPTIONS: Array<{
   title: string;
   description: string;
 }> = [
-  { mode: 'Strict', title: 'Strict Mode', description: '3 micro-check threshold' },
-  { mode: 'Normal', title: 'Normal Mode', description: '5 micro-check threshold' },
-  { mode: 'Relaxed', title: 'Relaxed Mode', description: '7 micro-check threshold' },
-];
+    { mode: 'Strict', title: 'Strict Mode', description: '3 micro-check threshold' },
+    { mode: 'Normal', title: 'Normal Mode', description: '5 micro-check threshold' },
+    { mode: 'Relaxed', title: 'Relaxed Mode', description: '7 micro-check threshold' },
+  ];
 
 function resolveScoreVisual(category: string): ScoreVisual {
   return SCORE_VISUALS[category] ?? SCORE_VISUALS.Low;
@@ -107,11 +114,44 @@ function ScreenManager() {
     setSensitivityMode(resolveModeFromThreshold(getDriftThreshold()));
   }, []);
 
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval>;
+
+    const startPolling = async () => {
+      const hasPermission = await checkUsageAccessPermission();
+      if (!hasPermission) {
+        console.log('App Usage Permission not granted, skipping polling.');
+        return;
+      }
+
+      intervalId = setInterval(async () => {
+        const events = await getRecentUsageEvents();
+        if (events && events.length > 0) {
+          analyzeUsageEvents(events);
+          refreshMetrics();
+        }
+      }, 5000);
+    };
+
+    startPolling();
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, []);
+
   const handleModeSelect = (mode: SensitivityMode) => {
     setDriftThreshold(mode);
     setSensitivityMode(mode);
     refreshMetrics();
     setScreen('home');
+  };
+
+  const testUsage = async () => {
+    const events = await getRecentUsageEvents();
+    console.log("Usage Events:", events);
   };
 
   const scoreVisual = resolveScoreVisual(scoreCategory);
@@ -171,6 +211,10 @@ function ScreenManager() {
       >
         <Text style={styles.primaryButtonText}>Start Social Mode</Text>
       </TouchableOpacity>
+
+      <View style={{ marginTop: 16 }}>
+        <Button title="Test Usage Events" onPress={testUsage} />
+      </View>
     </View>
   );
 
@@ -293,6 +337,14 @@ function ScreenManager() {
     <View style={styles.centeredBlock}>
       <Text style={styles.title}>Sensitivity Settings</Text>
       <View style={styles.settingsGroup}>
+        <TouchableOpacity
+          style={[styles.settingOption, { marginBottom: 16 }]}
+          onPress={openUsageAccessSettings}
+        >
+          <Text style={styles.settingOptionTitle}>App Usage Permission</Text>
+          <Text style={styles.settingOptionSubtitle}>Open Android settings to grant usage tracking access</Text>
+        </TouchableOpacity>
+
         {SENSITIVITY_OPTIONS.map((option) => {
           const selected = option.mode === sensitivityMode;
           return (
