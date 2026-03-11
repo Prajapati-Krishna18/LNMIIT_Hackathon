@@ -56,6 +56,15 @@ export const initDatabase = async () => {
       );
     `);
 
+        await db.executeSql(`
+      CREATE TABLE IF NOT EXISTS ai_insights (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT UNIQUE,
+        insight_text TEXT,
+        generated_at TEXT
+      );
+    `);
+
         console.log('[PresencePulse DB] Tables verified/created');
     } catch (error) {
         console.error('[PresencePulse DB] Initialization error:', error);
@@ -173,5 +182,63 @@ export const cleanOldSessions = async (daysToKeep = 30) => {
         console.log(`[PresencePulse DB] Cleaned up old sessions before ${thresholdDate.toISOString()} - rows affected: ${results.rowsAffected}`);
     } catch (error) {
         console.error('[PresencePulse DB] Clean old sessions error:', error);
+    }
+};
+
+export const getCachedInsight = async (date) => {
+    if (!db) return null;
+    try {
+        const [results] = await db.executeSql('SELECT * FROM ai_insights WHERE date = ?', [date]);
+        if (results.rows.length > 0) {
+            console.log('[PresencePulse] Using cached insight');
+            return results.rows.item(0);
+        }
+        return null;
+    } catch (error) {
+        console.error('[PresencePulse DB] Get cached insight error:', error);
+        return null;
+    }
+};
+
+export const saveInsight = async (date, insightText) => {
+    if (!db) return;
+    try {
+        const generatedAt = new Date().toISOString();
+        await db.executeSql(
+            `INSERT OR REPLACE INTO ai_insights (date, insight_text, generated_at) VALUES (?, ?, ?)`,
+            [date, insightText, generatedAt]
+        );
+        console.log(`[PresencePulse DB] Saved AI insight for ${date}`);
+    } catch (error) {
+        console.error('[PresencePulse DB] Save insight error:', error);
+    }
+};
+
+export const getSessionsForDate = async (dateStr) => {
+    if (!db) return [];
+    try {
+        const [results] = await db.executeSql(
+            `SELECT
+             id,
+             packageName as package_name,
+             startTime as start_time,
+             endTime as end_time,
+             duration,
+             type as session_type,
+             is_social_context,
+             isPhubbing
+            FROM sessions
+            WHERE date(startTime / 1000, 'unixepoch', 'localtime') = date(?)
+            ORDER BY start_time ASC`,
+            [dateStr]
+        );
+        const sessions = [];
+        for (let i = 0; i < results.rows.length; i++) {
+            sessions.push(results.rows.item(i));
+        }
+        return sessions;
+    } catch (error) {
+        console.error('[PresencePulse DB] Get sessions for date error:', error);
+        return [];
     }
 };

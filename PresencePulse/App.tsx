@@ -27,12 +27,14 @@ import {
   openUsageAccessSettings,
   listenForUnlockEvents,
 } from './src/services/usageTrackingService';
-import { initDatabase, getDailyMetrics } from './src/database/databaseService';
+import { initDatabase, getDailyMetrics, getCachedInsight, saveInsight } from './src/database/databaseService';
 import { initializeStateFromStorage, registerScreenUnlock } from './src/services/contextEngine';
 import { checkSocialContext } from './src/services/bluetoothProximityService';
 import { analyzePatterns } from './src/engine/patternAnalyzer';
 import { fetchDailyInsight } from './src/services/llmService';
+import { generateDailyInsight } from './src/services/aiInsightService';
 import { getCurrentNudgeTier, resetNudgeTier } from './src/engine/nudgeEngine';
+import TimelineScreen from './src/screens/TimelineScreen';
 
 function App() {
   return (
@@ -117,6 +119,26 @@ function ScreenManager() {
     }
   };
 
+  const loadOrGenerateDailyInsight = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const cached = await getCachedInsight(today);
+
+    if (cached) {
+      setDailyInsight(cached.insight_text);
+      return;
+    }
+
+    const hour = new Date().getHours();
+    if (hour < 6) return;
+
+    const metrics = await getDailyMetrics();
+    const patterns = await analyzePatterns();
+
+    const insight = await generateDailyInsight(metrics, patterns);
+    await saveInsight(today, insight);
+    setDailyInsight(insight);
+  };
+
   useEffect(() => {
     if (screen === 'insights') {
       console.log('---- INSIGHTS REFRESH ----');
@@ -127,7 +149,7 @@ function ScreenManager() {
         setTopTrigger(result.topTrigger);
         setVulnerableHour(result.vulnerableHour);
       });
-      fetchDailyInsight().then(setDailyInsight);
+      loadOrGenerateDailyInsight();
     }
 
     if (screen === 'home' || screen === 'insights') {
@@ -376,25 +398,10 @@ function ScreenManager() {
   );
 
   const renderTimeline = () => (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      <Text style={styles.title}>Attention Timeline</Text>
-      <View style={styles.timeline}>
-        <TimelineItem time="10:12 AM" event="Micro-check" />
-        <TimelineItem time="10:18 AM" event="Micro-check" />
-        <TimelineItem time="10:25 AM" event="Burst Detected" highlight />
-        <TimelineItem time="12:05 PM" event="Session Started" />
-        <TimelineItem time="12:07 PM" event="Micro-check" />
-      </View>
-      <TouchableOpacity
-        style={styles.secondaryButton}
-        onPress={() => {
-          refreshMetrics();
-          setScreen('insights');
-        }}
-      >
-        <Text style={styles.secondaryButtonText}>Back to Insights</Text>
-      </TouchableOpacity>
-    </ScrollView>
+    <TimelineScreen onBack={() => {
+      refreshMetrics();
+      setScreen('home'); // Explicitly back to home as requested
+    }} />
   );
 
   const renderSettings = () => (
@@ -511,25 +518,6 @@ function SuggestionCard({ label }: { label: string }) {
   return (
     <View style={styles.card}>
       <Text style={styles.cardValue}>{label}</Text>
-    </View>
-  );
-}
-
-function TimelineItem({
-  time,
-  event,
-  highlight = false,
-}: {
-  time: string;
-  event: string;
-  highlight?: boolean;
-}) {
-  return (
-    <View
-      style={[styles.timelineItem, highlight && styles.timelineItemHighlight]}
-    >
-      <Text style={styles.timelineTime}>{time}</Text>
-      <Text style={styles.timelineEvent}>{event}</Text>
     </View>
   );
 }
