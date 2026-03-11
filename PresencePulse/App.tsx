@@ -25,6 +25,8 @@ import {
   getRecentUsageEvents,
   openUsageAccessSettings,
 } from './src/services/usageTrackingService';
+import { initDatabase, getDailyMetrics } from './src/database/databaseService';
+import { initializeStateFromStorage } from './src/services/contextEngine';
 
 function App() {
   return (
@@ -133,7 +135,18 @@ function ScreenManager() {
       }, 5000);
     };
 
-    startPolling();
+    const initializeSequence = async () => {
+      await initDatabase();
+
+      // Phase 2: Restore behavioral status from SQLite
+      const todayMetrics = await getDailyMetrics();
+      initializeStateFromStorage(todayMetrics);
+      refreshMetrics();
+
+      startPolling();
+    };
+
+    initializeSequence();
 
     return () => {
       if (intervalId) {

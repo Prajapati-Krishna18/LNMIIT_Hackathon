@@ -8,6 +8,8 @@ based on session tracking and micro-check bursts.
 Implement everything cleanly below this comment.
 */
 
+import { insertSession, updateDailyMetrics } from '../database/databaseService';
+
 const MICRO_CHECK_THRESHOLD_SECONDS = 20;
 const BURST_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const BURST_THRESHOLD = 5;
@@ -23,6 +25,16 @@ let burstCount = 0;
 let driftSeverity = 'None';
 
 const logPrefix = '[PresencePulse]';
+
+export function initializeStateFromStorage(metrics) {
+  if (metrics) {
+    microCheckCount = metrics.microChecks || 0;
+    burstCount = metrics.burstEvents || 0;
+    console.log(`${logPrefix} State restored from storage: MC=${microCheckCount}, Burst=${burstCount}`);
+  } else {
+    console.log(`${logPrefix} No daily metrics found for today, starting fresh.`);
+  }
+}
 
 export function startSession() {
   if (currentSession) {
@@ -54,6 +66,7 @@ export function endSession() {
       durationSeconds < MICRO_CHECK_THRESHOLD_SECONDS
         ? 'micro-check'
         : 'session',
+    packageName: 'PresencePulse' // Internal session
   };
 
   sessionHistory.push(sessionRecord);
@@ -67,13 +80,28 @@ export function endSession() {
     microCheckCount += 1;
     console.log(`Micro-check detected. Count: ${microCheckCount}`);
     trackBurst(endTime);
+    triggerMetricsUpdate();
   } else {
     console.log(`${logPrefix} Standard session recorded.`);
   }
 
   updateDriftSeverity();
 
+  // Async save to SQLite
+  insertSession({
+    ...sessionRecord,
+    duration: Math.round(sessionRecord.durationSeconds) // Database expects integers
+  });
+
   return sessionRecord;
+}
+
+function triggerMetricsUpdate() {
+  updateDailyMetrics({
+    microChecks: microCheckCount,
+    burstEvents: burstCount,
+    presenceScore: getPresenceScore()
+  });
 }
 
 function trackBurst(referenceTime) {
@@ -88,6 +116,7 @@ function trackBurst(referenceTime) {
     attentionDrift = true;
     burstCount += 1;
     console.log('Attention drift detected');
+    triggerMetricsUpdate();
   }
 
   updateDriftSeverity();
@@ -246,8 +275,15 @@ function processRealSession(session) {
     microCheckCount += 1;
     console.log(`${logPrefix} Real Micro-check detected. Count: ${microCheckCount}`);
     trackBurst(session.endTime);
+    triggerMetricsUpdate();
   } else {
     updateDriftSeverity();
   }
+
+  // Save parsed Android session to SQLite
+  insertSession({
+    ...record,
+    duration: Math.round(durationSeconds) // Store duration as integer
+  });
 }
 
