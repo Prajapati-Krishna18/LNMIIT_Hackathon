@@ -302,15 +302,24 @@ function ScreenManager() {
           <Text style={styles.tagline}>Detect. Reflect. Reconnect.</Text>
         </View>
 
-        <TouchableOpacity
-          style={[styles.zenButton, zenActive && styles.zenButtonActive]}
-          onPress={() => {
-            const newState = toggleZenMode();
-            setZenActive(newState);
-          }}
-        >
-          <Text style={styles.zenButtonText}>{zenActive ? '🌙 Zen On' : '☀️ Track'}</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={[styles.zenButton, zenActive && styles.zenButtonActive]}
+            onPress={() => {
+              const newState = toggleZenMode();
+              setZenActive(newState);
+            }}
+          >
+            <Text style={styles.zenButtonText}>{zenActive ? '🌙 Zen' : '☀️ Track'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.miniSettingsButton}
+            onPress={() => setScreen('settings')}
+          >
+            <Text style={styles.miniSettingsButtonText}>⚙️</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {zenActive && (
@@ -349,15 +358,21 @@ function ScreenManager() {
         <MetricCard label="Burst Events" value={String(burstEvents)} />
       </View>
 
-      <TouchableOpacity
-        style={[styles.primaryButton, styles.homeButton]}
-        onPress={() => {
-          startSession();
-          setScreen('social');
-        }}
-      >
-        <Text style={styles.primaryButtonText}>Start Social Mode</Text>
-      </TouchableOpacity>
+      <View style={styles.actionBlock}>
+        <TouchableOpacity
+          style={[styles.primaryButton, styles.homeButton]}
+          onPress={() => {
+            startSession();
+            setScreen('social');
+          }}
+        >
+          <Text style={styles.primaryButtonText}>Start Social Mode</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.testButton} onPress={testUsage}>
+          <Text style={styles.testButtonText}>Test Usage Events</Text>
+        </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 
@@ -929,8 +944,26 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 16,
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  miniSettingsButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(24, 24, 27, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#27272A',
+  },
+  miniSettingsButtonText: {
+    fontSize: 18,
   },
   headerBlock: {
     gap: 8,
@@ -1032,6 +1065,12 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '900',
     letterSpacing: -1,
+  },
+  actionBlock: {
+    width: '100%',
+    gap: 12,
+    marginTop: 24,
+    marginBottom: 40,
   },
   settingsGroup: {
     width: '100%',
