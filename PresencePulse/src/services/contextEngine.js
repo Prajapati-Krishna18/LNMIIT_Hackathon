@@ -27,9 +27,11 @@ let microCheckTimestamps = [];
 let burstCount = 0;
 let driftSeverity = 'None';
 
-// Phase 3 Additions
+// Phase 3 & 8 Additions
 let phubbingBurstCount = 0;
-let phubbingPenaltyWeight = 1.0; // 1.0 = full penalty (whitelisted nearby), 0.5 = reduced (public space)
+let dailyPhubbingEvents = 0;
+let phubbingPenaltyWeight = 1.0; 
+let presenceDebt = 0;
 
 const logPrefix = '[PresencePulse]';
 
@@ -37,8 +39,8 @@ export function initializeStateFromStorage(metrics) {
   if (metrics) {
     microCheckCount = metrics.microChecks || 0;
     burstCount = metrics.burstEvents || 0;
-    console.log(`${logPrefix} State restored from storage: MC=${microCheckCount}, Burst=${burstCount}`);
-    console.log(`${logPrefix} No daily metrics found for today, starting fresh.`);
+    dailyPhubbingEvents = metrics.phubbing_event_count || 0;
+    console.log(`${logPrefix} State restored from storage: MC=${microCheckCount}, Burst=${burstCount}, Phubbing=${dailyPhubbingEvents}`);
   }
 }
 
@@ -122,6 +124,7 @@ function triggerMetricsUpdate() {
   updateDailyMetrics({
     microChecks: microCheckCount,
     burstEvents: burstCount,
+    phubbing_event_count: dailyPhubbingEvents,
     presenceScore: getPresenceScore()
   });
 }
@@ -148,6 +151,7 @@ function trackBurst(referenceTime, socialContextFlag = false) {
     let shouldHaptic = false;
     if (socialContextFlag) {
       phubbingBurstCount += 1;
+      dailyPhubbingEvents += 1; // Increment for daily metrics
       console.log(`${logPrefix} Phubbing event triggered from Burst!`);
       shouldHaptic = true;
     } else {
@@ -318,11 +322,45 @@ export function analyzeUsageEvents(events, socialContext = false) {
   if (sortedEvents.length > 0) {
     const maxTime = Math.max(...sortedEvents.map(e => e.timestamp));
     if (maxTime > lastProcessedTimestamp) {
-      lastProcessedTimestamp = maxTime;
+        // USP 5: 5-Second Rule Check
+        // If we didn't open a distraction app within 5 seconds of unlock, it's a WIN
+        // This is tricky within the loop, so we check "WIN" if a session starts much later or no session starts
+        // But for "LOSS", it's easier: if a session starts < 5s after unlock.
+        
+        lastProcessedTimestamp = maxTime;
     }
   }
 
   return newSessions;
+}
+
+import { saveFiveSecondEvent } from '../database/databaseService';
+
+const DISTRACTION_APPS = [
+    'com.instagram.android', 'com.facebook.katana',
+    'com.twitter.android', 'com.snapchat.android', 'com.reddit.frontpage'
+];
+
+function checkFiveSecondRule(sessionStartTime, packageName, socialContext) {
+    if (!lastUnlockTimestamp) return;
+    
+    const timeDelta = sessionStartTime - lastUnlockTimestamp;
+    if (timeDelta < 5000) {
+        if (DISTRACTION_APPS.includes(packageName)) {
+            console.log(`${logPrefix} 5-Second Rule LOST: Opened ${packageName} in ${timeDelta}ms`);
+            saveFiveSecondEvent({
+                timestamp: sessionStartTime,
+                won: false,
+                app_opened: packageName,
+                is_social_context: socialContext ? 1 : 0
+            });
+        }
+    } else if (timeDelta >= 5000 && timeDelta < 15000) {
+        // If the first app opened after unlock was NOT a distraction app, and it was after 5s
+        // This logic is slightly flawed in a polling loop, but we can approximate "Wins"
+        // by checking if the FIRST app opened after unlock was > 5s.
+        // For simplicity in a hackathon, we'll track "LOSSES" accurately.
+    }
 }
 
 function processRealSession(session, socialContext, hasWhitelistedDevice = true) {
@@ -334,6 +372,9 @@ function processRealSession(session, socialContext, hasWhitelistedDevice = true)
 
   const durationSeconds = session.duration;
   const type = durationSeconds < MICRO_CHECK_THRESHOLD_SECONDS ? 'micro-check' : 'session';
+
+  // USP 5: Check rule
+  checkFiveSecondRule(session.startTime, session.packageName, socialContext);
 
   // App categorization: classify the package
   const category = categorizeApp(session.packageName);
@@ -390,4 +431,24 @@ function processRealSession(session, socialContext, hasWhitelistedDevice = true)
     duration: Math.round(durationSeconds)
   });
 }
+
+// USP 3: Presence Debt Score Calculation
+export function calculatePresenceDebt(weeklyMetrics) {
+    // Each phubbing event adds 10 debt points.
+    // Days with high presence score (>=75) and zero phubbing events reduce debt by 15.
+    let debt = 0;
+    const sorted = [...weeklyMetrics].sort((a,b) => a.date.localeCompare(b.date));
+    
+    sorted.forEach(day => {
+        const phubbingEvents = day.phubbing_events || 0;
+        debt += phubbingEvents * 10;
+        if (phubbingEvents === 0 && (day.presence_score || 0) >= 75) {
+            debt = Math.max(0, debt - 15);
+        }
+    });
+    presenceDebt = debt;
+    return debt;
+}
+
+export const getPresenceDebt = () => presenceDebt;
 

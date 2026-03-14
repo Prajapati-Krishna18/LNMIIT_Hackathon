@@ -74,29 +74,22 @@ export const generateBehavioralBlueprint = async () => {
             return getDefaultBlueprint();
         }
 
-        const prompt = `You are a behavioral psychologist specializing in digital wellbeing. Analyze this 7-day phone usage data and return a JSON object.
-
-DATA:
-${JSON.stringify(sessionSummary, null, 2)}
-
-TODAY'S METRICS:
-- Presence Score: ${metrics?.presenceScore || 100}/100
-- Micro-checks: ${metrics?.microChecks || 0}
-- Burst Events: ${metrics?.burstEvents || 0}
-
-Return ONLY a valid JSON object with this exact structure (no markdown, no code fences):
-{
-  "vulnerabilityWindows": [{"startHour": <number>, "endHour": <number>, "severity": "high|medium|low"}],
-  "triggerPatterns": [{"app": "<readable name>", "category": "<social|entertainment|messaging>", "frequency": <number>}],
-  "weeklyTrend": "improving|stable|declining",
-  "coachingInsight": "<2-3 sentences of specific, data-driven advice>"
-}
-
-Rules:
-- Identify the 1-2 hour windows with the most micro-checks as vulnerability windows.
-- Map package names to readable app names (com.instagram.android → Instagram).
-- Determine the weekly trend by comparing first half vs second half of the week.
-- Make the coaching insight SPECIFIC to their data — no generic advice.`;
+        const prompt = `You are a high-performance behavioral psychologist. Analyze this 7-day usage data and return a JSON behavior blueprint.
+        
+        DATA: ${JSON.stringify(sessionSummary)}
+        TODAY: Score ${metrics?.presenceScore || 100}, MC ${metrics?.microChecks || 0}, Bursts ${metrics?.burstEvents || 0}
+        
+        Return ONLY valid JSON:
+        {
+          "vulnerabilityWindows": [{"startHour": <number>, "endHour": <number>, "severity": "high|medium|low"}],
+          "triggerPatterns": [{"app": "<readable name>", "category": "<social|entertainment|messaging>", "frequency": <number>}],
+          "weeklyTrend": "improving|stable|declining",
+          "coachingInsight": "<Strict 4-sentence structure: 1. Observation of today's pattern. 2. Identification of the emotional trigger. 3. One concrete habit-swap for tomorrow. 4. High-impact encouragement.>"
+        }
+        
+        Rules:
+        - Map package names to readable names.
+        - Advice must be DATA-DRIVEN and UNCOMFORTABLY SPECIFIC.`;
 
         const response = await fetch(GEMINI_ENDPOINT, {
             method: 'POST',
@@ -147,13 +140,18 @@ export const fetchDailyInsight = async () => {
         let topTrigger = patterns ? patterns.topTrigger : 'Unknown';
 
         const prompt = `
-            You are a behavioral coach helping a user reduce phone addiction, specifically "phubbing" (ignoring physical company for a phone).
-            Today's Data:
+            You are a digital wellbeing coach. Analyze this data:
             - Presence Score: ${presenceScore}/100
-            - Micro-checks (short unlocks): ${microChecks}
-            - Most common phubbing trigger: ${topTrigger}
+            - Micro-checks: ${microChecks}
+            - Top Trigger: ${topTrigger}
             
-            Write a very short, punchy (max 2 sentences) encouraging tip or reflection to help them improve tomorrow. Do not use generic advice. Be specific to their data.
+            Provide exactly 4 sentences of coaching:
+            1. One sentence acknowledging today's pattern.
+            2. One sentence explaining the likely emotional trigger (boredom, anxiety, curiosity).
+            3. One sentence suggesting a concrete action for tomorrow.
+            4. One sentence of punchy encouragement.
+            
+            Keep it under 60 words total. No intro/outro.
         `;
 
         const response = await fetch(GEMINI_ENDPOINT, {

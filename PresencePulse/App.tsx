@@ -30,7 +30,7 @@ import {
   openUsageAccessSettings,
   listenForUnlockEvents,
 } from './src/services/usageTrackingService';
-import { initDatabase, getDailyMetrics, getCachedInsight, saveInsight, getVulnerableHour, getTopTriggerApps, getWeeklyScores, getImprovementStreak } from './src/database/databaseService';
+import { initDatabase, getDailyMetrics, getCachedInsight, saveInsight, getVulnerableHour, getTopTriggerApps, getWeeklyScores, getImprovementStreak, getHourlyHeatStats, getReflectionBreakdown, getFiveSecondStats, getWholeWeeklyMetrics } from './src/database/databaseService';
 import { initializeStateFromStorage, registerScreenUnlock } from './src/services/contextEngine';
 import { checkSocialContext } from './src/services/bluetoothProximityService';
 import { analyzePatterns } from './src/engine/patternAnalyzer';
@@ -41,6 +41,9 @@ import TimelineScreen from './src/screens/TimelineScreen';
 import ReconnectScreen from './src/screens/ReconnectScreen';
 import ReflectionModal from './src/components/ReflectionModal';
 import WeeklyHeatmap from './src/components/WeeklyHeatmap';
+import HeatSignature from './src/components/HeatSignature';
+import TriggerFingerprint from './src/components/TriggerFingerprint';
+import { calculatePresenceDebt, getPresenceDebt } from './src/services/contextEngine';
 
 function App() {
   return (
@@ -112,6 +115,10 @@ function ScreenManager() {
   const [vulnerableHourData, setVulnerableHourData] = useState<{hour: number, micro_check_count: number}>({hour: -1, micro_check_count: 0});
   const [zenActive, setZenActive] = useState(false);
   const [blueprint, setBlueprint] = useState<any>(null);
+  const [heatMap, setHeatMap] = useState<number[]>(Array(24).fill(0));
+  const [reflectionBreakdown, setReflectionBreakdown] = useState<any>({});
+  const [fiveSecondStats, setFiveSecondStats] = useState<any>({ won: 0, lost: 0, rate: 0 });
+  const [presenceDebt, setPresenceDebt] = useState(0);
 
   const insets = useSafeAreaInsets();
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -158,6 +165,7 @@ function ScreenManager() {
       });
       resetNudgeTier();
     }
+    setPresenceDebt(getPresenceDebt());
   };
 
   const loadOrGenerateDailyInsight = async () => {
@@ -204,6 +212,15 @@ function ScreenManager() {
       getVulnerableHour().then(setVulnerableHourData).catch(e => console.warn('[Phase7] vulnerableHour error:', e));
       getTopTriggerApps().then(setTriggerApps).catch(e => console.warn('[Phase7] triggerApps error:', e));
       getImprovementStreak().then(setImprovementStreak).catch(e => console.warn('[Phase7] streak error:', e));
+      
+      // Phase 8: Fetch USP data
+      getHourlyHeatStats().then(setHeatMap).catch(e => console.warn('[USP] heatMap error:', e));
+      getReflectionBreakdown().then(setReflectionBreakdown).catch(e => console.warn('[USP] reflection error:', e));
+      getFiveSecondStats().then(setFiveSecondStats).catch(e => console.warn('[USP] fiveSecond error:', e));
+      getWholeWeeklyMetrics().then(metrics => {
+          const debt = calculatePresenceDebt(metrics);
+          setPresenceDebt(debt);
+      }).catch(e => console.warn('[USP] debt error:', e));
     }
 
     if (screen === 'home' || screen === 'insights') {
@@ -342,6 +359,19 @@ function ScreenManager() {
           </Text>
         </View>
         <Text style={styles.presenceSubtitle}>Your Current Presence Score</Text>
+        
+        {/* Presence Debt Indicator */}
+        <View style={styles.debtContainer}>
+            <Text style={[styles.debtLabel, { color: presenceDebt > 30 ? '#FF3366' : '#A1A1AA' }]}>
+                Presence Debt: <Text style={styles.debtValue}>{presenceDebt}</Text>
+            </Text>
+            <Text style={styles.debtStatus}>
+                {presenceDebt === 0 ? '💚 Fully present this week' : 
+                 presenceDebt <= 30 ? '💛 Presence debt: recovering' : 
+                 presenceDebt <= 70 ? '🟠 You have missed some moments' : 
+                 '🔴 High presence debt — start fresh tomorrow'}
+            </Text>
+        </View>
       </Animated.View>
 
       <View style={[styles.metricsRow, { marginTop: 24 }]}>
@@ -445,7 +475,15 @@ function ScreenManager() {
           value={topTrigger !== 'Unknown' ? topTrigger : '--'}
           detail={vulnerableHour !== -1 ? `Peak at ${vulnerableHour}:00` : ''}
         />
+        <InsightCard
+          label="Rule Win Rate"
+          value={`${fiveSecondStats.rate}%`}
+          detail={`${fiveSecondStats.won} Wins / ${fiveSecondStats.lost} Losses`}
+        />
       </View>
+
+      <HeatSignature heatMap={heatMap} />
+      <TriggerFingerprint breakdown={reflectionBreakdown} />
 
       {/* Phase 7: Pattern Intelligence Cards */}
       <View style={styles.patternSection}>
@@ -1190,6 +1228,24 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     marginTop: 8,
+  },
+  debtContainer: {
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  debtLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  debtValue: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  debtStatus: {
+    fontSize: 12,
+    color: '#71717A',
+    marginTop: 2,
+    fontWeight: '600',
   },
 });
 

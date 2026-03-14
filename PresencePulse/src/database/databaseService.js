@@ -54,9 +54,24 @@ export const initDatabase = async () => {
         date TEXT PRIMARY KEY,
         microChecks INTEGER,
         burstEvents INTEGER,
+        phubbing_event_count INTEGER DEFAULT 0,
+        social_context_minutes INTEGER DEFAULT 0,
         presenceScore INTEGER
       );
     `);
+
+        await addColumn('ALTER TABLE daily_metrics ADD COLUMN phubbing_event_count INTEGER DEFAULT 0');
+        await addColumn('ALTER TABLE daily_metrics ADD COLUMN social_context_minutes INTEGER DEFAULT 0');
+
+        await db.executeSql(`
+          CREATE TABLE IF NOT EXISTS five_second_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            won INTEGER NOT NULL,
+            app_opened TEXT,
+            is_social_context INTEGER DEFAULT 0
+          );
+        `);
 
         await db.executeSql(`
       CREATE TABLE IF NOT EXISTS ai_insights (
@@ -155,16 +170,16 @@ export const updateDailyMetrics = async (metrics) => {
         return;
     }
     try {
-        const { microChecks, burstEvents, presenceScore } = metrics;
+        const { microChecks, burstEvents, presenceScore, phubbing_event_count = 0, social_context_minutes = 0 } = metrics;
 
         // Get current local date in YYYY-MM-DD
         const date = new Date().toISOString().split('T')[0];
 
         await db.executeSql(
-            `INSERT OR REPLACE INTO daily_metrics (date, microChecks, burstEvents, presenceScore) VALUES (?, ?, ?, ?)`,
-            [date, microChecks, burstEvents, presenceScore]
+            `INSERT OR REPLACE INTO daily_metrics (date, microChecks, burstEvents, phubbing_event_count, social_context_minutes, presenceScore) VALUES (?, ?, ?, ?, ?, ?)`,
+            [date, microChecks, burstEvents, phubbing_event_count, social_context_minutes, presenceScore]
         );
-        console.log(`[PresencePulse DB] Updated metrics for ${date}: MC=${microChecks}, Burst=${burstEvents}, Score=${presenceScore}`);
+        console.log(`[PresencePulse DB] Updated metrics for ${date}: MC=${microChecks}, Burst=${burstEvents}, Phubbing=${phubbing_event_count}, Score=${presenceScore}`);
     } catch (error) {
         console.error('[PresencePulse DB] Update daily metrics error:', error);
     }
@@ -438,5 +453,125 @@ export const getImprovementStreak = async () => {
     } catch (error) {
         console.error('[PresencePulse DB] getImprovementStreak error:', error);
         return 0;
+    }
+};
+
+// ─── Phase 8: USP Helpers ─────────────────
+
+export const saveFiveSecondEvent = async (event) => {
+    if (!db) return;
+    try {
+        const { timestamp, won, app_opened, is_social_context = 0 } = event;
+        await db.executeSql(
+            `INSERT INTO five_second_events (timestamp, won, app_opened, is_social_context) VALUES (?, ?, ?, ?)`,
+            [timestamp, won ? 1 : 0, app_opened, is_social_context ? 1 : 0]
+        );
+        console.log(`[PresencePulse DB] Saved 5-second event: ${won ? 'WON' : 'LOST'}`);
+    } catch (error) {
+        console.error('[PresencePulse DB] Save 5-second event error:', error);
+    }
+};
+
+export const getFiveSecondStats = async (daysBack = 7) => {
+    if (!db) return { won: 0, lost: 0, rate: 0 };
+    try {
+        const cutoff = Date.now() - daysBack * 24 * 60 * 60 * 1000;
+        const [results] = await db.executeSql(
+            `SELECT 
+                COUNT(*) as total,
+                SUM(won) as won_count
+             FROM five_second_events
+             WHERE timestamp >= ?`,
+            [cutoff]
+        );
+        if (results.rows.length > 0) {
+            const { total, won_count } = results.rows.item(0);
+            const lost = total - won_count;
+            const rate = total > 0 ? Math.round((won_count / total) * 100) : 0;
+            return { won: won_count || 0, lost: lost || 0, rate };
+        }
+        return { won: 0, lost: 0, rate: 0 };
+    } catch (error) {
+        console.error('[PresencePulse DB] Get 5-second stats error:', error);
+        return { won: 0, lost: 0, rate: 0 };
+    }
+};
+
+export const getReflectionBreakdown = async (daysBack = 7) => {
+    if (!db) return {};
+    try {
+        const cutoff = Date.now() - daysBack * 24 * 60 * 60 * 1000;
+        const [results] = await db.executeSql(
+            `SELECT trigger_type, COUNT(*) as count
+             FROM reflections
+             WHERE timestamp >= ?
+             GROUP BY trigger_type
+             ORDER BY count DESC`,
+            [cutoff]
+        );
+        const breakdown = {};
+        let total = 0;
+        for (let i = 0; i < results.rows.length; i++) {
+            const item = results.rows.item(i);
+            breakdown[item.trigger_type] = item.count;
+            total += item.count;
+        }
+        // Convert to percentages
+        if (total > 0) {
+            Object.keys(breakdown).forEach(k => {
+                breakdown[k] = Math.round((breakdown[k] / total) * 100);
+            });
+        }
+        return breakdown;
+    } catch (error) {
+        console.error('[PresencePulse DB] getReflectionBreakdown error:', error);
+        return {};
+    }
+};
+
+export const getWholeWeeklyMetrics = async () => {
+    if (!db) return [];
+    try {
+        const [results] = await db.executeSql(
+            `SELECT date, presenceScore as presence_score, phubbing_event_count as phubbing_events
+             FROM daily_metrics
+             ORDER BY date DESC
+             LIMIT 7`
+        );
+        const metrics = [];
+        for (let i = 0; i < results.rows.length; i++) {
+            metrics.push(results.rows.item(i));
+        }
+        return metrics;
+    } catch (error) {
+        console.error('[PresencePulse DB] getWholeWeeklyMetrics error:', error);
+        return [];
+    }
+};
+
+export const getHourlyHeatStats = async (daysBack = 7) => {
+    if (!db) return Array(24).fill(0);
+    try {
+        const cutoff = Date.now() - daysBack * 24 * 60 * 60 * 1000;
+        const [results] = await db.executeSql(
+            `SELECT 
+                CAST(strftime('%H', startTime / 1000, 'unixepoch', 'localtime') AS INTEGER) AS hour,
+                SUM(CASE WHEN type = 'micro-check' AND is_social_context = 1 THEN 3 
+                         WHEN type = 'burst' THEN 2
+                         WHEN type = 'micro-check' THEN 1 ELSE 0 END) as heat_score
+             FROM sessions
+             WHERE startTime >= ?
+             GROUP BY hour`,
+            [cutoff]
+        );
+        const heatMap = Array(24).fill(0);
+        for (let i = 0; i < results.rows.length; i++) {
+            const row = results.rows.item(i);
+            heatMap[row.hour] = row.heat_score;
+        }
+        return heatMap;
+    } catch (error) {
+        console.error('[PresencePulse DB] getHourlyHeatStats error:', error);
+        return Array(24).fill(0);
     }
 };
