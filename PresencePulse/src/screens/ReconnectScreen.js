@@ -2,19 +2,58 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native';
 
 export default function ReconnectScreen({ burstCount, onComplete, onSkip }) {
-    const [mode, setMode] = useState('menu'); // 'menu' | 'breathe' | 'block'
+    const [mode, setMode] = useState('gate'); // 'gate' | 'menu' | 'breathe'
+    const [gateTimeLeft, setGateTimeLeft] = useState(30);
     const [timeLeft, setTimeLeft] = useState(120);
     const scaleAnim = useRef(new Animated.Value(1)).current;
     const timerRef = useRef(null);
+    const gateTimerRef = useRef(null);
 
+    // Start the 30-second forced breathing gate immediately
     useEffect(() => {
+        startGateBreathing();
         return () => {
             if (timerRef.current) clearInterval(timerRef.current);
+            if (gateTimerRef.current) clearInterval(gateTimerRef.current);
             scaleAnim.stopAnimation();
         };
     }, []);
 
-    const startBreathing = () => {
+    const startGateBreathing = () => {
+        // Start breathing animation
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(scaleAnim, {
+                    toValue: 1.6,
+                    duration: 4000,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true
+                }),
+                Animated.timing(scaleAnim, {
+                    toValue: 1,
+                    duration: 4000,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true
+                })
+            ])
+        ).start();
+
+        // 30-second countdown
+        gateTimerRef.current = setInterval(() => {
+            setGateTimeLeft((prev) => {
+                if (prev <= 1) {
+                    clearInterval(gateTimerRef.current);
+                    scaleAnim.stopAnimation();
+                    scaleAnim.setValue(1);
+                    setMode('menu');
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+    };
+
+    const startFullBreathing = () => {
         setMode('breathe');
         setTimeLeft(120);
 
@@ -28,23 +67,48 @@ export default function ReconnectScreen({ burstCount, onComplete, onSkip }) {
             });
         }, 1000);
 
-        const animateParams = {
-            toValue: 1.6,
-            duration: 4000,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true
-        };
-
         Animated.loop(
             Animated.sequence([
-                Animated.timing(scaleAnim, animateParams),
-                Animated.timing(scaleAnim, { ...animateParams, toValue: 1 })
+                Animated.timing(scaleAnim, {
+                    toValue: 1.6,
+                    duration: 4000,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true
+                }),
+                Animated.timing(scaleAnim, {
+                    toValue: 1,
+                    duration: 4000,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true
+                })
             ])
         ).start();
     };
 
-    const isInhaling = timeLeft % 8 >= 4;
+    const isInhaling = (mode === 'gate' ? gateTimeLeft : timeLeft) % 8 >= 4;
 
+    // FORCED 30-SECOND BREATHING GATE — no skip, no interaction
+    if (mode === 'gate') {
+        return (
+            <View style={styles.container}>
+                <Text style={styles.gateTitle}>Take a moment to breathe.</Text>
+                <Text style={styles.gateSubtitle}>
+                    You've been drifting. Let's reset together.
+                </Text>
+
+                <Text style={styles.gateTimer}>{gateTimeLeft}s</Text>
+
+                <View style={styles.animationContainer}>
+                    <Animated.View style={[styles.circle, { transform: [{ scale: scaleAnim }] }]} />
+                    <Text style={styles.breatheText}>{isInhaling ? 'Inhale' : 'Exhale'}</Text>
+                </View>
+
+                <Text style={styles.gateHint}>Options appear after breathing</Text>
+            </View>
+        );
+    }
+
+    // FULL 2-MINUTE BREATHING (post-gate choice)
     if (mode === 'breathe') {
         if (timeLeft === 0) {
             return (
@@ -68,6 +132,7 @@ export default function ReconnectScreen({ burstCount, onComplete, onSkip }) {
         );
     }
 
+    // MENU — shown after the 30-second gate
     return (
         <View style={styles.container}>
             <Text style={styles.title}>You drifted into phone mode again.</Text>
@@ -76,7 +141,7 @@ export default function ReconnectScreen({ burstCount, onComplete, onSkip }) {
             </Text>
 
             <View style={styles.optionsList}>
-                <TouchableOpacity style={styles.optionCard} onPress={startBreathing}>
+                <TouchableOpacity style={styles.optionCard} onPress={startFullBreathing}>
                     <Text style={styles.cardTitle}>1. Guided breathing</Text>
                     <Text style={styles.cardDesc}>2-minute visual exercise to reset your nervous system.</Text>
                 </TouchableOpacity>
@@ -106,6 +171,34 @@ const styles = StyleSheet.create({
         padding: 24,
         justifyContent: 'center'
     },
+    gateTitle: {
+        fontSize: 28,
+        fontWeight: '700',
+        color: '#F1F5F9',
+        textAlign: 'center',
+        marginBottom: 8
+    },
+    gateSubtitle: {
+        fontSize: 16,
+        color: '#94A3B8',
+        textAlign: 'center',
+        marginBottom: 24,
+        lineHeight: 24
+    },
+    gateTimer: {
+        fontSize: 48,
+        fontWeight: '200',
+        color: '#60A5FA',
+        textAlign: 'center',
+        marginBottom: 20
+    },
+    gateHint: {
+        fontSize: 13,
+        color: '#475569',
+        textAlign: 'center',
+        marginTop: 40,
+        letterSpacing: 0.5
+    },
     title: {
         fontSize: 26,
         fontWeight: 'bold',
@@ -124,7 +217,7 @@ const styles = StyleSheet.create({
         width: '100%'
     },
     optionCard: {
-        backgroundColor: '#533483', // Purple accent
+        backgroundColor: '#533483',
         padding: 20,
         borderRadius: 16,
         marginBottom: 16
@@ -159,13 +252,14 @@ const styles = StyleSheet.create({
     animationContainer: {
         flex: 1,
         justifyContent: 'center',
-        alignItems: 'center'
+        alignItems: 'center',
+        maxHeight: 300
     },
     circle: {
         width: 150,
         height: 150,
         borderRadius: 75,
-        backgroundColor: '#2D9E5F', // Green accent
+        backgroundColor: '#2D9E5F',
         opacity: 0.6,
         position: 'absolute'
     },

@@ -32,9 +32,9 @@ import { initDatabase, getDailyMetrics, getCachedInsight, saveInsight, getVulner
 import { initializeStateFromStorage, registerScreenUnlock } from './src/services/contextEngine';
 import { checkSocialContext } from './src/services/bluetoothProximityService';
 import { analyzePatterns } from './src/engine/patternAnalyzer';
-import { fetchDailyInsight } from './src/services/llmService';
-import { generateDailyInsight } from './src/services/aiInsightService';
+import { fetchDailyInsight, generateBehavioralBlueprint } from './src/services/llmService';
 import { getCurrentNudgeTier, resetNudgeTier } from './src/engine/nudgeEngine';
+import { isZenMode, toggleZenMode } from './src/services/zenService';
 import TimelineScreen from './src/screens/TimelineScreen';
 import ReconnectScreen from './src/screens/ReconnectScreen';
 import ReflectionModal from './src/components/ReflectionModal';
@@ -108,6 +108,8 @@ function ScreenManager() {
   const [triggerApps, setTriggerApps] = useState<any[]>([]);
   const [improvementStreak, setImprovementStreak] = useState(0);
   const [vulnerableHourData, setVulnerableHourData] = useState<{hour: number, micro_check_count: number}>({hour: -1, micro_check_count: 0});
+  const [zenActive, setZenActive] = useState(false);
+  const [blueprint, setBlueprint] = useState<any>(null);
 
   const refreshMetrics = () => {
     setMicroChecks(getMicroCheckCount());
@@ -139,12 +141,19 @@ function ScreenManager() {
     const hour = new Date().getHours();
     if (hour < 6) return;
 
-    const metrics = await getDailyMetrics();
-    const patterns = await analyzePatterns();
-
-    const insight = await generateDailyInsight(metrics, patterns);
-    await saveInsight(today, insight);
-    setDailyInsight(insight);
+    // Use Gemini 1.5 Pro Behavioral Blueprint
+    try {
+      const bp = await generateBehavioralBlueprint();
+      setBlueprint(bp);
+      const insight = bp.coachingInsight || 'Keep tracking to build your behavioral profile.';
+      await saveInsight(today, insight);
+      setDailyInsight(insight);
+    } catch (e) {
+      console.warn('[App] Blueprint generation failed, using fallback:', e);
+      const insight = await fetchDailyInsight();
+      await saveInsight(today, insight);
+      setDailyInsight(insight);
+    }
   };
 
   useEffect(() => {
@@ -156,18 +165,22 @@ function ScreenManager() {
       analyzePatterns().then((result) => {
         setTopTrigger(result.topTrigger);
         setVulnerableHour(result.vulnerableHour);
-      });
-      loadOrGenerateDailyInsight();
+      }).catch(e => console.warn('[Insights] analyzePatterns error:', e));
+      loadOrGenerateDailyInsight().catch(e => console.warn('[Insights] dailyInsight error:', e));
 
       // Phase 7: Fetch pattern intelligence data
-      getWeeklyScores().then(setWeeklyScores);
-      getVulnerableHour().then(setVulnerableHourData);
-      getTopTriggerApps().then(setTriggerApps);
-      getImprovementStreak().then(setImprovementStreak);
+      getWeeklyScores().then(setWeeklyScores).catch(e => console.warn('[Phase7] weeklyScores error:', e));
+      getVulnerableHour().then(setVulnerableHourData).catch(e => console.warn('[Phase7] vulnerableHour error:', e));
+      getTopTriggerApps().then(setTriggerApps).catch(e => console.warn('[Phase7] triggerApps error:', e));
+      getImprovementStreak().then(setImprovementStreak).catch(e => console.warn('[Phase7] streak error:', e));
     }
 
     if (screen === 'home' || screen === 'insights') {
-      refreshMetrics();
+      // Only update metrics display — don't redirect from nudge tiers during tab navigation
+      setMicroChecks(getMicroCheckCount());
+      setBurstEvents(getBurstCount());
+      setPresenceScore(getPresenceScore());
+      setScoreCategory(getScoreCategory());
     }
 
     if (screen === 'insights' || screen === 'drift') {
@@ -251,75 +264,69 @@ function ScreenManager() {
   const scoreAccentColor = scoreVisual.accent;
 
   const renderHome = () => (
-    <>
-      <ScrollView contentContainerStyle={styles.homeScrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerBlock}>
-            <Text style={styles.appName}>Presence Pulse</Text>
-            <Text style={styles.tagline}>Detect. Reflect. Reconnect.</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.settingsButton}
-            onPress={() => setScreen('settings')}
-          >
-            <Text style={styles.settingsButtonText}>Settings</Text>
-          </TouchableOpacity>
+    <ScrollView contentContainerStyle={styles.homeScrollContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.headerRow}>
+        <View style={styles.headerBlock}>
+          <Text style={styles.appName}>Presence Pulse</Text>
+          <Text style={styles.tagline}>Detect. Reflect. Reconnect.</Text>
         </View>
-
-        <View style={[styles.presenceCard, { borderColor: scoreAccentColor }]}>
-          <Text style={styles.presenceLabel}>Presence Score</Text>
-          <View style={[styles.scoreCircle, { borderColor: scoreAccentColor }]}>
-            <Text style={[styles.scoreValue, { color: scoreAccentColor }]}>
-              {presenceScore}%
-            </Text>
-          </View>
-          <View
-            style={[
-              styles.scoreCategoryTag,
-              {
-                backgroundColor: scoreVisual.surface,
-                borderColor: scoreAccentColor,
-              },
-            ]}
-          >
-            <Text
-              style={[styles.scoreCategoryTagText, { color: scoreAccentColor }]}
-            >
-              {scoreCategory} Focus
-            </Text>
-          </View>
-          <Text style={styles.presenceSubtitle}>Your Current Presence Score</Text>
-        </View>
-
-        <View style={styles.metricsRow}>
-          <MetricCard label="Micro-checks Today" value={String(microChecks)} />
-          <MetricCard label="Burst Events" value={String(burstEvents)} />
-        </View>
-
         <TouchableOpacity
-          style={[styles.primaryButton, styles.homeButton]}
+          style={[styles.zenButton, zenActive && styles.zenButtonActive]}
           onPress={() => {
-            startSession();
-            setScreen('social');
+            const newState = toggleZenMode();
+            setZenActive(newState);
           }}
         >
-          <Text style={styles.primaryButtonText}>Start Social Mode</Text>
+          <Text style={styles.zenButtonText}>{zenActive ? '🌙 Zen On' : '☀️ Track'}</Text>
         </TouchableOpacity>
+      </View>
 
-        <View style={{ marginTop: 16 }}>
-          <Button title="Test Usage Events" onPress={testUsage} />
+      {zenActive && (
+        <View style={styles.zenBanner}>
+          <Text style={styles.zenBannerText}>🧘 Zen Mode — Tracking paused</Text>
         </View>
-      </ScrollView>
+      )}
 
-      {/* TIER 2 INTERVENTION - Global Reflection Modal */}
-      <ReflectionModal
-        visible={getCurrentNudgeTier() === 2}
-        onClose={() => {
-          resetNudgeTier();
-          refreshMetrics();
+      <View style={[styles.presenceCard, { borderColor: scoreAccentColor }]}>
+        <Text style={styles.presenceLabel}>Presence Score</Text>
+        <View style={[styles.scoreCircle, { borderColor: scoreAccentColor }]}>
+          <Text style={[styles.scoreValue, { color: scoreAccentColor }]}>
+            {presenceScore}%
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.scoreCategoryTag,
+            {
+              backgroundColor: scoreVisual.surface,
+              borderColor: scoreAccentColor,
+            },
+          ]}
+        >
+          <Text
+            style={[styles.scoreCategoryTagText, { color: scoreAccentColor }]}
+          >
+            {scoreCategory} Focus
+          </Text>
+        </View>
+        <Text style={styles.presenceSubtitle}>Your Current Presence Score</Text>
+      </View>
+
+      <View style={styles.metricsRow}>
+        <MetricCard label="Micro-checks Today" value={String(microChecks)} />
+        <MetricCard label="Burst Events" value={String(burstEvents)} />
+      </View>
+
+      <TouchableOpacity
+        style={[styles.primaryButton, styles.homeButton]}
+        onPress={() => {
+          startSession();
+          setScreen('social');
         }}
-      />
-    </>
+      >
+        <Text style={styles.primaryButtonText}>Start Social Mode</Text>
+      </TouchableOpacity>
+    </ScrollView>
   );
 
   const renderSocial = () => (
@@ -458,6 +465,31 @@ function ScreenManager() {
         <Text style={styles.insightBoxText}>{dailyInsight}</Text>
       </View>
 
+      {/* Behavioral Blueprint: Vulnerability Windows */}
+      {blueprint && blueprint.vulnerabilityWindows && blueprint.vulnerabilityWindows.length > 0 && (
+        <View style={styles.patternCard}>
+          <Text style={styles.patternCardIcon}>⚠️</Text>
+          <Text style={styles.patternCardLabel}>Vulnerability Windows</Text>
+          {blueprint.vulnerabilityWindows.map((w: any, idx: number) => (
+            <Text key={idx} style={styles.patternAppItem}>
+              {formatHourLabel(w.startHour)} – {formatHourLabel(w.endHour)} ({w.severity})
+            </Text>
+          ))}
+        </View>
+      )}
+
+      {blueprint && blueprint.weeklyTrend && (
+        <View style={styles.patternCard}>
+          <Text style={styles.patternCardIcon}>
+            {blueprint.weeklyTrend === 'improving' ? '📈' : blueprint.weeklyTrend === 'declining' ? '📉' : '➡️'}
+          </Text>
+          <Text style={styles.patternCardLabel}>Weekly Trend</Text>
+          <Text style={styles.patternCardValue}>
+            {blueprint.weeklyTrend.charAt(0).toUpperCase() + blueprint.weeklyTrend.slice(1)}
+          </Text>
+        </View>
+      )}
+
       <TouchableOpacity
         style={[styles.primaryButton, styles.fullWidthButton]}
         onPress={() => setScreen('timeline')}
@@ -572,6 +604,16 @@ function ScreenManager() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.screenContent}>{renderScreen()}</View>
+
+      {/* Global Reflection Modal — rendered outside screen content */}
+      <ReflectionModal
+        visible={getCurrentNudgeTier() === 2}
+        onClose={() => {
+          resetNudgeTier();
+          refreshMetrics();
+        }}
+      />
+
       {showBottomNav && (
         <View style={styles.bottomNav}>
           <TouchableOpacity
@@ -967,6 +1009,40 @@ const styles = StyleSheet.create({
   },
   homeButton: {
     marginTop: 24,
+  },
+  zenButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#1F2B40',
+    backgroundColor: '#132038',
+  },
+  zenButtonActive: {
+    backgroundColor: '#1A1A3E',
+    borderColor: '#7C3AED',
+  },
+  zenButtonText: {
+    color: '#A78BFA',
+    fontWeight: '600',
+    fontSize: 13,
+    letterSpacing: 0.5,
+  },
+  zenBanner: {
+    backgroundColor: '#1A1A3E',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#7C3AED',
+    marginBottom: 12,
+    alignItems: 'center' as const,
+  },
+  zenBannerText: {
+    color: '#C4B5FD',
+    fontSize: 14,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
   testButton: {
     paddingVertical: 10,

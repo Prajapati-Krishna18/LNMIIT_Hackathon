@@ -10,6 +10,8 @@ Implement everything cleanly below this comment.
 
 import { insertSession, updateDailyMetrics } from '../database/databaseService';
 import { triggerHapticNudge, shouldShowReflectionPrompt } from './nudgeEngine';
+import { categorizeApp } from './appCategorizer';
+import { isZenMode } from './zenService';
 
 const MICRO_CHECK_THRESHOLD_SECONDS = 20;
 const BURST_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
@@ -27,6 +29,7 @@ let driftSeverity = 'None';
 
 // Phase 3 Additions
 let phubbingBurstCount = 0;
+let phubbingPenaltyWeight = 1.0; // 1.0 = full penalty (whitelisted nearby), 0.5 = reduced (public space)
 
 const logPrefix = '[PresencePulse]';
 
@@ -65,6 +68,13 @@ export function endSession() {
     return null;
   }
 
+  // Zen Mode: skip all processing
+  if (isZenMode()) {
+    currentSession = null;
+    console.log(`${logPrefix} Zen Mode active — session discarded.`);
+    return null;
+  }
+
   const endTime = Date.now();
   const durationSeconds = (endTime - currentSession.startTime) / 1000;
 
@@ -76,7 +86,8 @@ export function endSession() {
       durationSeconds < MICRO_CHECK_THRESHOLD_SECONDS
         ? 'micro-check'
         : 'session',
-    packageName: 'PresencePulse' // Internal session
+    packageName: 'PresencePulse', // Internal session
+    category: 'utility' // Own app is always utility
   };
 
   sessionHistory.push(sessionRecord);
@@ -87,6 +98,7 @@ export function endSession() {
   );
 
   if (sessionRecord.type === 'micro-check') {
+    // Only count micro-checks for the app's own sessions
     microCheckCount += 1;
     console.log(`Micro-check detected. Count: ${microCheckCount}`);
     trackBurst(endTime);
@@ -100,7 +112,7 @@ export function endSession() {
   // Async save to SQLite
   insertSession({
     ...sessionRecord,
-    duration: Math.round(sessionRecord.durationSeconds) // Database expects integers
+    duration: Math.round(sessionRecord.durationSeconds)
   });
 
   return sessionRecord;
@@ -219,9 +231,10 @@ export function getBurstCount() {
 }
 
 export function getPresenceScore() {
-  // Step 8: Normal burst = -10 points. Phubbing burst = -15 points.
+  // Context-aware scoring: weighted phubbing penalty
   const normalBursts = Math.max(0, burstCount - phubbingBurstCount);
-  const score = 100 - (normalBursts * 10) - (phubbingBurstCount * 15);
+  const weightedPhubbingCost = Math.round(phubbingBurstCount * 15 * phubbingPenaltyWeight);
+  const score = 100 - (normalBursts * 10) - weightedPhubbingCost;
   return Math.max(0, Math.floor(score));
 }
 
@@ -312,9 +325,18 @@ export function analyzeUsageEvents(events, socialContext = false) {
   return newSessions;
 }
 
-function processRealSession(session, socialContext) {
+function processRealSession(session, socialContext, hasWhitelistedDevice = true) {
+  // Zen Mode: skip all processing
+  if (isZenMode()) {
+    console.log(`${logPrefix} Zen Mode active — skipping session processing.`);
+    return;
+  }
+
   const durationSeconds = session.duration;
   const type = durationSeconds < MICRO_CHECK_THRESHOLD_SECONDS ? 'micro-check' : 'session';
+
+  // App categorization: classify the package
+  const category = categorizeApp(session.packageName);
 
   // Phase 3: Identify Triggers
   const timeSinceUnlock = lastUnlockTimestamp ? (session.startTime - lastUnlockTimestamp) : 99999;
@@ -324,6 +346,15 @@ function processRealSession(session, socialContext) {
   const is_social_context = socialContext ? 1 : 0;
   const isPhubbing = (type === 'micro-check' && socialContext) ? 1 : 0;
 
+  // Refined social context: reduce phubbing penalty in public spaces
+  if (socialContext && !hasWhitelistedDevice) {
+    phubbingPenaltyWeight = 0.5;
+    console.log(`${logPrefix} Public space detected — phubbing penalty reduced to 50%`);
+  } else if (socialContext && hasWhitelistedDevice) {
+    phubbingPenaltyWeight = 1.0;
+    console.log(`${logPrefix} Whitelisted device nearby — full phubbing penalty`);
+  }
+
   const record = {
     startTime: session.startTime,
     endTime: session.endTime,
@@ -332,25 +363,31 @@ function processRealSession(session, socialContext) {
     packageName: session.packageName,
     is_social_context,
     triggerType,
-    isPhubbing
+    isPhubbing,
+    category
   };
 
   sessionHistory.push(record);
-  console.log(`${logPrefix} Real session parsed: ${session.packageName} (${durationSeconds.toFixed(2)}s) - ${type}. Trigger: ${triggerType}. SocialContext: ${Boolean(is_social_context)}`);
+  console.log(`${logPrefix} Real session parsed: ${session.packageName} [${category}] (${durationSeconds.toFixed(2)}s) - ${type}. Trigger: ${triggerType}. SocialContext: ${Boolean(is_social_context)}`);
 
   if (type === 'micro-check') {
-    microCheckCount += 1;
-    console.log(`${logPrefix} Real Micro-check detected. Count: ${microCheckCount}`);
-    trackBurst(session.endTime, socialContext);
-    triggerMetricsUpdate();
+    // CONTEXT-AWARE FILTERING: Only count distraction micro-checks
+    if (category === 'distraction') {
+      microCheckCount += 1;
+      console.log(`${logPrefix} DISTRACTION micro-check detected. Count: ${microCheckCount}`);
+      trackBurst(session.endTime, socialContext);
+      triggerMetricsUpdate();
+    } else {
+      console.log(`${logPrefix} ${category.toUpperCase()} micro-check — no score deduction. Package: ${session.packageName}`);
+    }
   } else {
     updateDriftSeverity();
   }
 
-  // Save parsed Android session to SQLite
+  // Save parsed Android session to SQLite (all categories, for analytics)
   insertSession({
     ...record,
-    duration: Math.round(durationSeconds) // Store duration as integer
+    duration: Math.round(durationSeconds)
   });
 }
 
