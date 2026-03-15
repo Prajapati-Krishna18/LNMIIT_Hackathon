@@ -1,6 +1,7 @@
+import axios from 'axios';
 import { GEMINI_API_KEY } from '../constants/apiKeys';
 
-const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 // STEP 3: Create AI Insight Service
 export function buildBehaviorSummary(metrics, patterns) {
@@ -75,53 +76,52 @@ Rules:
 - Just natural sentences.`;
 
     try {
-        const response = await fetch(GEMINI_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }]
-            })
-        });
+        const payload = {
+            contents: [{ 
+                parts: [{ 
+                    text: `Act as a warm, non-judgmental digital wellness coach.\n\nDATA:\n${prompt}` 
+                }] 
+            }]
+        };
 
-        if (!response.ok) throw new Error('Gemini API Error');
+        const response = await axios.post(GEMINI_ENDPOINT, payload);
 
-        const data = await response.json();
-        const insight = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        console.log('[PresencePulse] AI insight generated via Gemini');
+        const insight = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
         return insight ? insight.trim() : getFallbackInsight(metrics);
     } catch (error) {
-        console.log('[PresencePulse] AI fallback triggered:', error);
+        if (error.response) {
+            console.error('[aiInsightService] Gemini API Error (Insight):', error.response.status, error.response.data);
+            if (JSON.stringify(error.response.data).includes('expired')) {
+                console.error('CRITICAL: Your Gemini API Key has EXPIRED. Please renew it in constants/apiKeys.js');
+            }
+        } else {
+            console.error('[aiInsightService] Network Error (Insight):', error.message);
+        }
         return getFallbackInsight(metrics);
     }
 }
 
 export async function sendCheckInMessage(userMessage, behaviorContext) {
     try {
-        const systemPrompt = `You are a warm digital wellness coach. The user is checking in about their phone habits.
-                         Their presence score today is ${behaviorContext.score}/100.
-                         They have had ${behaviorContext.microChecks} micro-checks so far.
-                         Respond in 2-3 sentences. Be conversational, not clinical.
-                         Do not repeat their words back. Offer one specific, actionable thought.`;
+        const prompt = `You are a warm digital wellness coach. Reflect with the user.
+                         Score: ${behaviorContext.score}, Checks: ${behaviorContext.microChecks}.
+                         User said: "${userMessage}"
+                         Reply in 2 sentences.`;
 
-        const response = await fetch(GEMINI_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [
-                    { role: 'user', parts: [{ text: `SYSTEM CONTEXT: ${systemPrompt}\n\nUSER MESSAGE: ${userMessage}` }] }
-                ]
-            })
-        });
+        const payload = {
+            contents: [{ parts: [{ text: prompt }] }]
+        };
 
-        if (!response.ok) throw new Error('Gemini API Error');
+        const response = await axios.post(GEMINI_ENDPOINT, payload);
+        const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-        const data = await response.json();
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        return text ? text.trim() : "I understand. Focus on one small moment of presence right now, and let's try to be more intentional with our next pick-up.";
+        return text ? text.trim() : "I'm listening. Taking a moment to breathe is the first step toward reclaimimg focus.";
     } catch (error) {
-        console.error('[PresencePulse] Check-in API error:', error);
-        return "I understand. Focus on one small moment of presence right now, and let's try to be more intentional with our next pick-up.";
+        if (error.response) {
+            console.error('[aiInsightService] Gemini API Error (Check-in):', error.response.status, error.response.data);
+        } else {
+            console.error('[aiInsightService] Network Error (Check-in):', error.message);
+        }
+        return "I understand. Your reflection is the foundation for a more mindful tomorrow.";
     }
 }

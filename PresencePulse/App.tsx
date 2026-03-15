@@ -42,8 +42,7 @@ import ReconnectScreen from './src/screens/ReconnectScreen';
 import ReflectionModal from './src/components/ReflectionModal';
 import WeeklyHeatmap from './src/components/WeeklyHeatmap';
 import InsightsScreen from './src/screens/InsightsScreen';
-import HeatSignature from './src/components/HeatSignature';
-import TriggerFingerprint from './src/components/TriggerFingerprint';
+import CoachScreen from './src/screens/CoachScreen';
 import { calculatePresenceDebt, getPresenceDebt } from './src/services/contextEngine';
 
 function App() {
@@ -96,7 +95,7 @@ function resolveModeFromThreshold(threshold: number): SensitivityMode {
 
 function ScreenManager() {
   const [screen, setScreen] = useState<
-    'home' | 'social' | 'drift' | 'reconnect' | 'insights' | 'timeline' | 'settings'
+    'home' | 'social' | 'drift' | 'reconnect' | 'insights' | 'timeline' | 'settings' | 'coach'
   >('home');
   const [socialContext, setSocialContext] = useState(false);
   const socialContextRef = useRef(false);
@@ -343,6 +342,25 @@ function ScreenManager() {
         </View>
       )}
 
+      {/* Flagship USP 4: Coach Entry Point (Prominent Position) */}
+      <TouchableOpacity 
+        style={styles.coachCard} 
+        onPress={() => setScreen('coach')}
+      >
+        <View style={styles.coachCardHeader}>
+            <Text style={styles.coachCardTitle}>✨ Digital Coach Sanctuary</Text>
+            {checkInDone && <Text style={styles.doneBadge}>DONE</Text>}
+        </View>
+        <Text style={styles.coachCardText}>
+            {checkInDone 
+                ? "Daily check-in complete. Your sanctuary is always open." 
+                : "Good Morning. How are you feeling about your focus today?"}
+        </Text>
+        <Text style={styles.coachCardAction}>
+            {checkInDone ? "Continue Reflection ›" : "Start Conversational Check-in ›"}
+        </Text>
+      </TouchableOpacity>
+
       <Animated.View style={[styles.presenceCard, { borderColor: scoreAccentColor, opacity: fadeAnim, marginTop: 20 }]}>
         <Text style={styles.presenceLabel}>Presence Score</Text>
         <Animated.View style={[styles.scoreCircle, { borderColor: scoreAccentColor, transform: [{ scale: pulseAnim }], shadowColor: scoreAccentColor, elevation: 12 }]}>
@@ -386,15 +404,24 @@ function ScreenManager() {
         <MetricCard label="Burst Events" value={String(burstEvents)} />
       </View>
 
-      <TouchableOpacity
-        style={[styles.primaryButton, styles.homeButton]}
-        onPress={() => {
-          startSession();
-          setScreen('social');
-        }}
-      >
-        <Text style={styles.primaryButtonText}>Start Social Mode</Text>
-      </TouchableOpacity>
+      <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.primaryButton, styles.homeButton, {flex: 1}]}
+            onPress={() => {
+              startSession();
+              setScreen('social');
+            }}
+          >
+            <Text style={styles.primaryButtonText}>Social Mode</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.insightsTrigger}
+            onPress={() => setScreen('insights')}
+          >
+            <Text style={styles.insightsTriggerText}>Insights</Text>
+          </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 
@@ -473,14 +500,6 @@ function ScreenManager() {
       heatMap={heatMap}
       reflectionBreakdown={reflectionBreakdown}
       fiveSecondStats={fiveSecondStats}
-      checkInDone={checkInDone}
-      checkInResponse={checkInResponse}
-      onCheckInComplete={(response: string) => {
-          const { updateCheckInStatus } = require('./src/database/databaseService');
-          updateCheckInStatus(true, response);
-          setCheckInDone(true);
-          setCheckInResponse(response);
-      }}
       onTimelinePress={() => setScreen('timeline')}
       onTestUsage={testUsage}
     />
@@ -492,6 +511,22 @@ function ScreenManager() {
       refreshMetrics();
       setScreen('home');
     }} />
+  );
+
+  const renderCoach = () => (
+    <CoachScreen
+      onBack={() => setScreen('home')}
+      microChecks={microChecks}
+      score={presenceScore}
+      checkInDone={checkInDone}
+      checkInResponse={checkInResponse}
+      onCheckInComplete={(response: string) => {
+          const { updateCheckInStatus } = require('./src/database/databaseService');
+          updateCheckInStatus(true, response);
+          setCheckInDone(true);
+          setCheckInResponse(response);
+      }}
+    />
   );
 
   const renderSettings = () => (
@@ -572,6 +607,8 @@ function ScreenManager() {
         return renderTimeline();
       case 'settings':
         return renderSettings();
+      case 'coach':
+        return renderCoach();
       case 'home':
       default:
         return renderHome();
@@ -1166,6 +1203,75 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  coachCard: {
+    backgroundColor: '#1E1B4B',
+    borderRadius: 24,
+    padding: 20,
+    marginTop: 24,
+    borderWidth: 1,
+    borderColor: '#4338CA',
+    shadowColor: '#4338CA',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  coachCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  coachCardTitle: {
+    color: '#A5B4FC',
+    fontSize: 14,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  doneBadge: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    color: '#10B981',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  coachCardText: {
+    color: '#E0E7FF',
+    fontSize: 16,
+    fontWeight: '600',
+    lineHeight: 22,
+    marginBottom: 12,
+  },
+  coachCardAction: {
+    color: '#A5B4FC',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 24,
+    marginBottom: 40,
+  },
+  insightsTrigger: {
+    backgroundColor: '#18181B',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#3F3F46',
+    justifyContent: 'center',
+  },
+  insightsTriggerText: {
+    color: '#D4D4D8',
+    fontWeight: '800',
+    fontSize: 14,
+    textTransform: 'uppercase',
   },
 });
 

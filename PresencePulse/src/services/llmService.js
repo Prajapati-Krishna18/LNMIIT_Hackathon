@@ -1,8 +1,9 @@
+import axios from 'axios';
 import { getDailyMetrics, getSessionsForDate } from '../database/databaseService';
 import { analyzePatterns } from '../engine/patternAnalyzer';
 import { GEMINI_API_KEY } from '../constants/apiKeys';
 
-const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 /**
  * Behavioral Blueprint — structured output from deep pattern analysis
@@ -91,25 +92,21 @@ export const generateBehavioralBlueprint = async () => {
         - Map package names to readable names.
         - Advice must be DATA-DRIVEN and UNCOMFORTABLY SPECIFIC.`;
 
-        const response = await fetch(GEMINI_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                    temperature: 0.3,
-                    maxOutputTokens: 500
-                }
-            })
-        });
+        const payload = {
+            contents: [{ 
+                parts: [{ 
+                    text: `Behavioral Psychologist: Analyze this 7-day data and return ONLY a JSON blueprint.\n\nDATA:\n${prompt}` 
+                }] 
+            }],
+            generationConfig: {
+                temperature: 0.1,
+                responseMimeType: "application/json"
+            }
+        };
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('[LLMService] Gemini error:', response.status, errorText);
-            return getDefaultBlueprint();
-        }
+        const response = await axios.post(GEMINI_ENDPOINT, payload);
 
-        const data = await response.json();
+        const data = response.data;
         const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
         if (!rawText) return getDefaultBlueprint();
@@ -122,7 +119,14 @@ export const generateBehavioralBlueprint = async () => {
         console.log('[LLMService] Behavioral Blueprint generated');
         return blueprint;
     } catch (error) {
-        console.error('[LLMService] Blueprint generation error:', error);
+        if (error.response) {
+            console.error('[LLMService] Gemini API Error (Blueprint):', error.response.status, error.response.data);
+            if (JSON.stringify(error.response.data).includes('expired')) {
+                console.error('CRITICAL: Your Gemini API Key has EXPIRED. Please renew it in constants/apiKeys.js');
+            }
+        } else {
+            console.error('[LLMService] Blueprint generation error:', error.message);
+        }
         return getDefaultBlueprint();
     }
 };
@@ -154,26 +158,24 @@ export const fetchDailyInsight = async () => {
             Keep it under 60 words total. No intro/outro.
         `;
 
-        const response = await fetch(GEMINI_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }]
-            })
-        });
+        const payload = {
+            contents: [{ 
+                parts: [{ 
+                    text: `Digital Wellbeing Coach: ${prompt}` 
+                }] 
+            }]
+        };
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('[LLMService] HTTP error response:', response.status, errorText);
-            return "Take a deep breath. Let's focus on being present tomorrow.";
-        }
-
-        const data = await response.json();
-        const insight = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        const response = await axios.post(GEMINI_ENDPOINT, payload);
+        const insight = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
         return insight ? insight.trim() : "Tomorrow is a new day to be present.";
     } catch (error) {
-        console.error('[LLMService] Error fetching insight:', error);
+        if (error.response) {
+            console.error('[LLMService] Gemini API Error (Insight):', error.response.status, error.response.data);
+        } else {
+            console.error('[LLMService] Error fetching insight:', error.message);
+        }
         return "Disconnect to reconnect. Your presence matters.";
     }
 };

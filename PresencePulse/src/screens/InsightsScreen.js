@@ -2,7 +2,6 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import WeeklyHeatmap from '../components/WeeklyHeatmap';
 import PhubbingHeatSignature from '../components/PhubbingHeatSignature';
-import MorningCheckIn from '../components/MorningCheckIn';
 import TriggerFingerprint from '../components/TriggerFingerprint';
 
 const formatHourLabel = (hour) => {
@@ -47,14 +46,8 @@ const InsightsScreen = ({
   reflectionBreakdown,
   fiveSecondStats,
   onTimelinePress,
-  onTestUsage,
-  checkInDone,
-  checkInResponse,
-  onCheckInComplete
+  onTestUsage
 }) => {
-  const isMorning = new Date().getHours() < 10;
-  const showCheckIn = isMorning || checkInDone;
-
   return (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
@@ -63,15 +56,6 @@ const InsightsScreen = ({
         </TouchableOpacity>
         <Text style={styles.title}>Attention Insights</Text>
       </View>
-
-      {showCheckIn && (
-        <MorningCheckIn 
-          microChecks={microChecks}
-          score={weeklyScores?.[weeklyScores.length - 1]?.presence_score || 100}
-          onComplete={onCheckInComplete}
-          initialResponse={checkInResponse}
-        />
-      )}
 
       <Text style={styles.sectionTitle}>Weekly Activity</Text>
       {weeklyScores && weeklyScores.length > 0 && <WeeklyHeatmap scores={weeklyScores} />}
