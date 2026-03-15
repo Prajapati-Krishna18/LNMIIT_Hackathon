@@ -168,11 +168,7 @@ function ScreenManager() {
       });
       resetNudgeTier();
     }
-    
-    getWholeWeeklyMetrics().then(metrics => {
-      const debt = calculatePresenceDebt(metrics);
-      setPresenceDebt(debt);
-    }).catch(e => console.warn('[App] debt refresh error:', e));
+    setPresenceDebt(getPresenceDebt());
   };
 
   const loadOrGenerateDailyInsight = async () => {
